@@ -21,6 +21,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def round_to_tick(price, tick_size=0.05):
+    """
+    Round a price down to the nearest valid tick size
+    
+    Args:
+        price (float): Price to round
+        tick_size (float): Tick size (default 0.05 for 5 paise)
+        
+    Returns:
+        float: Price rounded down to nearest valid tick
+        
+    Examples:
+        round_to_tick(10.18) -> 10.15
+        round_to_tick(10.14) -> 10.10
+        round_to_tick(10.15) -> 10.15
+    """
+    import math
+    return math.floor(price / tick_size) * tick_size
+
 def load_gtt_state(filepath):
     """
     Load GTT state from JSON file
@@ -138,13 +157,13 @@ def plan_gtt_updates(portfolio, gtt_state, config):
                 'new_high': new_high,
                 'tier1': {
                     'qty': tier1_qty,
-                    'trigger': round(tier1_trigger, 2),
-                    'limit': round(tier1_limit, 2)
+                    'trigger': round_to_tick(tier1_trigger),
+                    'limit': round_to_tick(tier1_limit)
                 },
                 'tier2': {
                     'qty': tier2_qty,
-                    'trigger': round(tier2_trigger, 2),
-                    'limit': round(tier2_limit, 2)
+                    'trigger': round_to_tick(tier2_trigger),
+                    'limit': round_to_tick(tier2_limit)
                 }
             }
             plans.append(plan)
@@ -564,11 +583,15 @@ def main_live_run():
                     update_count += 1
                     
                 except Exception as e:
-                    logger.error(f"Error processing UPDATE for {symbol}: {e}")
+                    logger.error(f"[{symbol}]: FAILED to process. Error: {e}")
                     # Continue with other symbols even if one fails
                     continue
             else:
-                logger.debug(f"Skipping {plan['symbol']}: action={plan['action']}")
+                try:
+                    logger.debug(f"Skipping {plan['symbol']}: action={plan['action']}")
+                except Exception as e:
+                    logger.error(f"[{plan.get('symbol', 'UNKNOWN')}]: FAILED to process. Error: {e}")
+                    continue
         
         # 7. Save updated GTT state
         logger.info("Step 7: Saving updated GTT state...")

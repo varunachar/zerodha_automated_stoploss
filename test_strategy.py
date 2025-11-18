@@ -750,6 +750,118 @@ class TestGTTStrategy(unittest.TestCase):
         for call in call_args_list:
             kwargs = call[1]
             self.assertEqual(kwargs['exchange'], 'NSE')
+    
+    def test_round_to_tick(self):
+        """Test round_to_tick function with various price values"""
+        # Test cases with default tick size (0.05)
+        test_cases = [
+            (10.18, 10.15),  # Round down from 10.18 to 10.15
+            (10.14, 10.10),  # Round down from 10.14 to 10.10
+            (10.15, 10.15),  # Already on tick, should remain same
+            (10.12, 10.10),  # Round down from 10.12 to 10.10
+            (10.13, 10.10),  # Round down from 10.13 to 10.10
+            (10.16, 10.15),  # Round down from 10.16 to 10.15
+            (10.19, 10.15),  # Round down from 10.19 to 10.15
+            (10.20, 10.15),  # Round down from 10.20 to 10.15 (floating point precision)
+            (100.00, 100.00), # Whole number, should remain same
+            (100.01, 100.00), # Round down from 100.01 to 100.00
+            (100.04, 100.00), # Round down from 100.04 to 100.00
+            (100.05, 100.00), # Round down from 100.05 to 100.00 (floating point precision)
+            (100.07, 100.05), # Round down from 100.07 to 100.05
+        ]
+        
+        for input_price, expected_output in test_cases:
+            with self.subTest(input_price=input_price):
+                result = main.round_to_tick(input_price)
+                self.assertAlmostEqual(result, expected_output, places=2,
+                                     msg=f"round_to_tick({input_price}) should be {expected_output}, got {result}")
+        
+        # Test with custom tick size
+        self.assertAlmostEqual(main.round_to_tick(10.18, 0.10), 10.10, places=2)
+        self.assertAlmostEqual(main.round_to_tick(10.25, 0.10), 10.20, places=2)
+        self.assertAlmostEqual(main.round_to_tick(10.30, 0.10), 10.30, places=2)
+        
+        # Test with tick size of 0.01 (1 paisa)
+        self.assertAlmostEqual(main.round_to_tick(10.186, 0.01), 10.18, places=2)
+        self.assertAlmostEqual(main.round_to_tick(10.189, 0.01), 10.18, places=2)
+    
+    @patch('main.get_kite_client')
+    @patch('main.load_gtt_state')
+    @patch('main.get_portfolio_with_ltp')
+    @patch('main.plan_gtt_updates')
+    @patch('main.cancel_existing_gtts')
+    @patch('main.place_new_gtts')
+    @patch('main.save_gtt_state')
+    def test_main_live_run_error_handling(self, mock_save_state, mock_place_gtts, 
+                                        mock_cancel_gtts, mock_plan_updates, 
+                                        mock_get_portfolio, mock_load_state, mock_get_kite):
+        """Test error handling in main_live_run when one stock fails but others continue"""
+        
+        # Setup mock kite client
+        mock_client = Mock()
+        mock_client.get_gtts.return_value = []
+        mock_get_kite.return_value = mock_client
+        
+        # Setup mock state and portfolio
+        mock_load_state.return_value = {}
+        mock_get_portfolio.return_value = []
+        mock_save_state.return_value = True
+        
+        # Setup plan_gtt_updates to return two UPDATE plans
+        mock_plans = [
+            {
+                'symbol': 'STOCK1',
+                'action': 'UPDATE',
+                'exchange': 'NSE',
+                'new_high': 1000.0,
+                'tier1': {'qty': 30, 'trigger': 900.0, 'limit': 890.0},
+                'tier2': {'qty': 70, 'trigger': 800.0, 'limit': 790.0}
+            },
+            {
+                'symbol': 'STOCK2', 
+                'action': 'UPDATE',
+                'exchange': 'NSE',
+                'new_high': 2000.0,
+                'tier1': {'qty': 15, 'trigger': 1800.0, 'limit': 1780.0},
+                'tier2': {'qty': 35, 'trigger': 1600.0, 'limit': 1580.0}
+            }
+        ]
+        mock_plan_updates.return_value = mock_plans
+        
+        # Setup cancel_existing_gtts to raise exception for first stock only
+        def cancel_side_effect(client, symbol, active_gtts):
+            if symbol == 'STOCK1':
+                raise Exception("API Error for STOCK1")
+            return 2  # Success for STOCK2
+        
+        mock_cancel_gtts.side_effect = cancel_side_effect
+        
+        # Setup place_new_gtts to succeed for both stocks (but won't be called for STOCK1 due to cancel failure)
+        mock_place_gtts.return_value = 2
+        
+        # Call main_live_run
+        result = main.main_live_run()
+        
+        # Assertions
+        self.assertEqual(len(result), 2)  # Should return both plans
+        
+        # Verify that cancel_existing_gtts was called for both stocks
+        self.assertEqual(mock_cancel_gtts.call_count, 2)
+        mock_cancel_gtts.assert_any_call(mock_client, 'STOCK1', [])
+        mock_cancel_gtts.assert_any_call(mock_client, 'STOCK2', [])
+        
+        # Verify that place_new_gtts was only called for STOCK2 (STOCK1 failed at cancel step)
+        self.assertEqual(mock_place_gtts.call_count, 1)
+        mock_place_gtts.assert_called_with(mock_client, mock_plans[1])  # Only STOCK2 plan
+        
+        # Verify that save_gtt_state was called
+        mock_save_state.assert_called_once()
+        
+        # Verify the saved state only contains STOCK2 (STOCK1 failed)
+        saved_state_call = mock_save_state.call_args[0][1]  # Second argument is the state data
+        self.assertIn('STOCK2', saved_state_call)
+        self.assertNotIn('STOCK1', saved_state_call)  # STOCK1 should not be in saved state due to failure
+        self.assertEqual(saved_state_call['STOCK2']['last_high_price'], 2000.0)
 
 if __name__ == '__main__':
     unittest.main()
