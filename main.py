@@ -160,9 +160,19 @@ def get_kite_client():
     Returns:
         KiteConnect: Configured Kite Connect client instance
     """
-    # TODO: Implement Kite Connect client initialization
-    # This will include API key setup and access token handling
-    pass
+    try:
+        # Initialize Kite Connect client
+        kite_client = KiteConnect(api_key=config.API_KEY)
+        
+        # Set access token
+        kite_client.set_access_token(config.ACCESS_TOKEN)
+        
+        logger.info("Successfully initialized Kite Connect client")
+        return kite_client
+        
+    except Exception as e:
+        logger.error(f"Error initializing Kite Connect client: {e}")
+        raise
 
 def get_mock_kite_client():
     """
@@ -489,6 +499,92 @@ def format_gtt_report(plans):
     
     return "\n".join(report_lines)
 
+def main_live_run():
+    """
+    Main live run function for executing GTT strategy with real orders
+    
+    This function:
+    1. Initializes a real Kite Connect client
+    2. Loads current GTT state
+    3. Gets portfolio data with LTP
+    4. Gets all active GTTs
+    5. Plans GTT updates
+    6. Executes the plans (cancel existing, place new GTTs)
+    7. Updates and saves the GTT state
+    """
+    try:
+        logger.info("Starting GTT Strategy Live Run...")
+        
+        # 1. Initialize real Kite Connect client
+        logger.info("Step 1: Initializing Kite Connect client...")
+        kite_client = get_kite_client()
+        
+        # 2. Load current GTT state
+        logger.info("Step 2: Loading GTT state...")
+        gtt_state = load_gtt_state(config.STATE_FILE_PATH)
+        logger.info(f"Loaded state for {len(gtt_state)} symbols")
+        
+        # 3. Get portfolio with LTP
+        logger.info("Step 3: Getting portfolio data with LTP...")
+        portfolio = get_portfolio_with_ltp(kite_client)
+        logger.info(f"Retrieved portfolio with {len(portfolio)} holdings")
+        
+        # 4. Get all active GTTs
+        logger.info("Step 4: Getting active GTTs...")
+        active_gtts = kite_client.get_gtts()
+        logger.info(f"Retrieved {len(active_gtts)} active GTTs")
+        
+        # 5. Plan GTT updates
+        logger.info("Step 5: Planning GTT updates...")
+        plans = plan_gtt_updates(portfolio, gtt_state, config)
+        logger.info(f"Generated {len(plans)} GTT plans")
+        
+        # 6. Execute plans
+        logger.info("Step 6: Executing GTT plans...")
+        update_count = 0
+        
+        for plan in plans:
+            if plan['action'] == 'UPDATE':
+                symbol = plan['symbol']
+                logger.info(f"Processing UPDATE for {symbol}...")
+                
+                try:
+                    # Cancel existing GTTs for this symbol
+                    canceled_count = cancel_existing_gtts(kite_client, symbol, active_gtts)
+                    logger.info(f"Canceled {canceled_count} existing GTT(s) for {symbol}")
+                    
+                    # Place new GTTs
+                    placed_count = place_new_gtts(kite_client, plan)
+                    logger.info(f"Placed {placed_count} new GTT(s) for {symbol}")
+                    
+                    # Update local GTT state
+                    gtt_state[symbol] = {'last_high_price': plan['new_high']}
+                    logger.info(f"Updated state for {symbol}: last_high_price={plan['new_high']}")
+                    
+                    update_count += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error processing UPDATE for {symbol}: {e}")
+                    # Continue with other symbols even if one fails
+                    continue
+            else:
+                logger.debug(f"Skipping {plan['symbol']}: action={plan['action']}")
+        
+        # 7. Save updated GTT state
+        logger.info("Step 7: Saving updated GTT state...")
+        if save_gtt_state(config.STATE_FILE_PATH, gtt_state):
+            logger.info("Successfully saved updated GTT state")
+        else:
+            logger.error("Failed to save GTT state")
+        
+        logger.info(f"Live run completed successfully. Processed {update_count} updates.")
+        return plans
+        
+    except Exception as e:
+        logger.error(f"Error during live run: {e}")
+        print(f"\n❌ Live run failed: {e}\n")
+        raise
+
 def main_dry_run():
     """
     Main dry run function for testing GTT strategy without placing actual orders
@@ -540,14 +636,9 @@ def main_dry_run():
         raise
 
 if __name__ == "__main__":
-    logger.info("GTT Stop-Loss Strategy Application Starting...")
-    logger.info(f"Dry Run Mode: {config.DRY_RUN}")
-    
     if config.DRY_RUN:
-        logger.info("Running in DRY RUN mode - no actual orders will be placed")
+        print("--- RUNNING IN DRY-RUN MODE ---")
         main_dry_run()
     else:
-        logger.info("Running in LIVE mode")
-        # TODO: Add live trading logic here
-        print("Live trading mode not yet implemented")
-        pass
+        print("--- RUNNING IN LIVE MODE ---")
+        main_live_run()
