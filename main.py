@@ -101,6 +101,7 @@ def plan_gtt_updates(portfolio, gtt_state, config):
         symbol = holding['tradingsymbol']
         current_price = holding['last_price']
         quantity = holding['quantity']
+        exchange = holding.get('exchange', 'NSE')  # Default to NSE if not specified
         
         # Get last high price from state, or use current price if new holding
         last_high_price = gtt_state.get(symbol, {}).get('last_high_price', current_price)
@@ -110,6 +111,7 @@ def plan_gtt_updates(portfolio, gtt_state, config):
             plan = {
                 'symbol': symbol,
                 'action': 'NO_ACTION',
+                'exchange': exchange,
                 'reason': f"LTP ({current_price}) not a new high ({last_high_price})"
             }
             plans.append(plan)
@@ -132,6 +134,7 @@ def plan_gtt_updates(portfolio, gtt_state, config):
             plan = {
                 'symbol': symbol,
                 'action': 'UPDATE',
+                'exchange': exchange,
                 'new_high': new_high,
                 'tier1': {
                     'qty': tier1_qty,
@@ -336,6 +339,93 @@ def cancel_existing_gtts(kite_client, tradingsymbol, active_gtts_list):
         
     except Exception as e:
         logger.error(f"Error canceling GTTs for {tradingsymbol}: {e}")
+        raise
+
+def place_new_gtts(kite_client, plan):
+    """
+    Place new GTTs for a single plan with UPDATE action
+    
+    Args:
+        kite_client: Kite Connect client instance
+        plan (dict): Plan dictionary with action == 'UPDATE' containing tier1 and tier2 data
+        
+    Returns:
+        int: Number of GTTs placed successfully
+    """
+    try:
+        if plan.get('action') != 'UPDATE':
+            logger.warning(f"Invalid plan action: {plan.get('action')}. Expected 'UPDATE'")
+            return 0
+        
+        symbol = plan.get('symbol')
+        exchange = plan.get('exchange', 'NSE')  # Default to NSE if not specified
+        tier1 = plan.get('tier1', {})
+        tier2 = plan.get('tier2', {})
+        
+        if not symbol:
+            logger.error("Plan missing required 'symbol' field")
+            return 0
+        
+        placed_count = 0
+        logger.info(f"Placing new GTTs for {symbol}")
+        
+        # Place Tier 1 GTT if quantity > 0
+        tier1_qty = tier1.get('qty', 0)
+        if tier1_qty > 0:
+            try:
+                logger.info(f"Placing Tier 1 GTT for {symbol}: qty={tier1_qty}, trigger={tier1.get('trigger')}, limit={tier1.get('limit')}")
+                kite_client.place_gtt(
+                    trigger_type='single',
+                    tradingsymbol=symbol,
+                    exchange=exchange,
+                    trigger_values=[tier1.get('trigger')],
+                    last_price=tier1.get('trigger'),
+                    orders=[{
+                        'transaction_type': 'SELL',
+                        'quantity': tier1_qty,
+                        'price': tier1.get('limit'),
+                        'order_type': 'LIMIT',
+                        'product': 'CNC'
+                    }]
+                )
+                placed_count += 1
+                logger.info(f"Successfully placed Tier 1 GTT for {symbol}")
+            except Exception as e:
+                logger.error(f"Failed to place Tier 1 GTT for {symbol}: {e}")
+        else:
+            logger.info(f"Skipping Tier 1 GTT for {symbol}: quantity is 0")
+        
+        # Place Tier 2 GTT if quantity > 0
+        tier2_qty = tier2.get('qty', 0)
+        if tier2_qty > 0:
+            try:
+                logger.info(f"Placing Tier 2 GTT for {symbol}: qty={tier2_qty}, trigger={tier2.get('trigger')}, limit={tier2.get('limit')}")
+                kite_client.place_gtt(
+                    trigger_type='single',
+                    tradingsymbol=symbol,
+                    exchange=exchange,
+                    trigger_values=[tier2.get('trigger')],
+                    last_price=tier2.get('trigger'),
+                    orders=[{
+                        'transaction_type': 'SELL',
+                        'quantity': tier2_qty,
+                        'price': tier2.get('limit'),
+                        'order_type': 'LIMIT',
+                        'product': 'CNC'
+                    }]
+                )
+                placed_count += 1
+                logger.info(f"Successfully placed Tier 2 GTT for {symbol}")
+            except Exception as e:
+                logger.error(f"Failed to place Tier 2 GTT for {symbol}: {e}")
+        else:
+            logger.info(f"Skipping Tier 2 GTT for {symbol}: quantity is 0")
+        
+        logger.info(f"Placed {placed_count} new GTT(s) for {symbol}")
+        return placed_count
+        
+    except Exception as e:
+        logger.error(f"Error placing new GTTs for plan: {e}")
         raise
 
 def format_gtt_report(plans):

@@ -448,6 +448,308 @@ class TestGTTStrategy(unittest.TestCase):
         
         # Verify delete_gtt was not called
         mock_client.delete_gtt.assert_not_called()
+    
+    def test_place_new_gtts(self):
+        """Test place_new_gtts function with mock kite client and UPDATE plan"""
+        # Create mock kite client
+        mock_client = Mock()
+        
+        # Create sample UPDATE plan with both tiers having quantities > 0
+        update_plan = {
+            'symbol': 'RELIANCE',
+            'action': 'UPDATE',
+            'exchange': 'NSE',
+            'new_high': 2600.0,
+            'tier1': {
+                'qty': 30,
+                'trigger': 2340.0,
+                'limit': 2314.0
+            },
+            'tier2': {
+                'qty': 70,
+                'trigger': 2080.0,
+                'limit': 2054.0
+            }
+        }
+        
+        # Call the function
+        result = main.place_new_gtts(mock_client, update_plan)
+        
+        # Assertions
+        self.assertEqual(result, 2)  # Should place 2 GTTs (both tiers)
+        
+        # Verify place_gtt was called exactly twice
+        self.assertEqual(mock_client.place_gtt.call_count, 2)
+        
+        # Get all call arguments
+        call_args_list = mock_client.place_gtt.call_args_list
+        
+        # Check Tier 1 GTT call arguments
+        tier1_call = call_args_list[0]
+        tier1_kwargs = tier1_call[1]  # keyword arguments
+        
+        self.assertEqual(tier1_kwargs['trigger_type'], 'single')
+        self.assertEqual(tier1_kwargs['tradingsymbol'], 'RELIANCE')
+        self.assertEqual(tier1_kwargs['exchange'], 'NSE')
+        self.assertEqual(tier1_kwargs['trigger_values'], [2340.0])
+        self.assertEqual(tier1_kwargs['last_price'], 2340.0)
+        
+        # Check Tier 1 order details
+        tier1_order = tier1_kwargs['orders'][0]
+        self.assertEqual(tier1_order['transaction_type'], 'SELL')
+        self.assertEqual(tier1_order['quantity'], 30)
+        self.assertEqual(tier1_order['price'], 2314.0)
+        self.assertEqual(tier1_order['order_type'], 'LIMIT')
+        self.assertEqual(tier1_order['product'], 'CNC')
+        
+        # Check Tier 2 GTT call arguments
+        tier2_call = call_args_list[1]
+        tier2_kwargs = tier2_call[1]  # keyword arguments
+        
+        self.assertEqual(tier2_kwargs['trigger_type'], 'single')
+        self.assertEqual(tier2_kwargs['tradingsymbol'], 'RELIANCE')
+        self.assertEqual(tier2_kwargs['exchange'], 'NSE')
+        self.assertEqual(tier2_kwargs['trigger_values'], [2080.0])
+        self.assertEqual(tier2_kwargs['last_price'], 2080.0)
+        
+        # Check Tier 2 order details
+        tier2_order = tier2_kwargs['orders'][0]
+        self.assertEqual(tier2_order['transaction_type'], 'SELL')
+        self.assertEqual(tier2_order['quantity'], 70)
+        self.assertEqual(tier2_order['price'], 2054.0)
+        self.assertEqual(tier2_order['order_type'], 'LIMIT')
+        self.assertEqual(tier2_order['product'], 'CNC')
+    
+    def test_place_new_gtts_with_zero_quantities(self):
+        """Test place_new_gtts function with zero quantities (small holdings)"""
+        # Create mock kite client
+        mock_client = Mock()
+        
+        # Create sample UPDATE plan with tier1_qty = 0 (small holding scenario)
+        update_plan = {
+            'symbol': 'SMALLSTOCK',
+            'action': 'UPDATE',
+            'exchange': 'NSE',
+            'new_high': 100.0,
+            'tier1': {
+                'qty': 0,  # Zero quantity - should be skipped
+                'trigger': 90.0,
+                'limit': 89.0
+            },
+            'tier2': {
+                'qty': 5,  # Non-zero quantity - should be placed
+                'trigger': 80.0,
+                'limit': 79.0
+            }
+        }
+        
+        # Call the function
+        result = main.place_new_gtts(mock_client, update_plan)
+        
+        # Assertions
+        self.assertEqual(result, 1)  # Should place only 1 GTT (tier2 only)
+        
+        # Verify place_gtt was called exactly once (only for tier2)
+        self.assertEqual(mock_client.place_gtt.call_count, 1)
+        
+        # Check that only Tier 2 GTT was placed
+        call_args = mock_client.place_gtt.call_args
+        kwargs = call_args[1]
+        
+        self.assertEqual(kwargs['trigger_values'], [80.0])
+        self.assertEqual(kwargs['orders'][0]['quantity'], 5)
+        self.assertEqual(kwargs['orders'][0]['price'], 79.0)
+    
+    def test_place_new_gtts_both_zero_quantities(self):
+        """Test place_new_gtts function when both tiers have zero quantities"""
+        # Create mock kite client
+        mock_client = Mock()
+        
+        # Create sample UPDATE plan with both tiers having zero quantities
+        update_plan = {
+            'symbol': 'VERYSMALLSTOCK',
+            'action': 'UPDATE',
+            'exchange': 'NSE',
+            'new_high': 50.0,
+            'tier1': {
+                'qty': 0,  # Zero quantity
+                'trigger': 45.0,
+                'limit': 44.5
+            },
+            'tier2': {
+                'qty': 0,  # Zero quantity
+                'trigger': 40.0,
+                'limit': 39.5
+            }
+        }
+        
+        # Call the function
+        result = main.place_new_gtts(mock_client, update_plan)
+        
+        # Assertions
+        self.assertEqual(result, 0)  # Should place 0 GTTs
+        
+        # Verify place_gtt was not called
+        mock_client.place_gtt.assert_not_called()
+    
+    def test_place_new_gtts_invalid_action(self):
+        """Test place_new_gtts function with invalid action"""
+        # Create mock kite client
+        mock_client = Mock()
+        
+        # Create plan with invalid action
+        invalid_plan = {
+            'symbol': 'TESTSTOCK',
+            'action': 'NO_ACTION',  # Invalid action for this function
+            'exchange': 'NSE',
+            'tier1': {'qty': 10, 'trigger': 100.0, 'limit': 99.0},
+            'tier2': {'qty': 20, 'trigger': 90.0, 'limit': 89.0}
+        }
+        
+        # Call the function
+        result = main.place_new_gtts(mock_client, invalid_plan)
+        
+        # Assertions
+        self.assertEqual(result, 0)  # Should place 0 GTTs
+        
+        # Verify place_gtt was not called
+        mock_client.place_gtt.assert_not_called()
+    
+    def test_place_new_gtts_missing_symbol(self):
+        """Test place_new_gtts function with missing symbol"""
+        # Create mock kite client
+        mock_client = Mock()
+        
+        # Create plan with missing symbol
+        invalid_plan = {
+            'action': 'UPDATE',
+            'exchange': 'NSE',
+            'tier1': {'qty': 10, 'trigger': 100.0, 'limit': 99.0},
+            'tier2': {'qty': 20, 'trigger': 90.0, 'limit': 89.0}
+            # Missing 'symbol' field
+        }
+        
+        # Call the function
+        result = main.place_new_gtts(mock_client, invalid_plan)
+        
+        # Assertions
+        self.assertEqual(result, 0)  # Should place 0 GTTs
+        
+        # Verify place_gtt was not called
+        mock_client.place_gtt.assert_not_called()
+    
+    def test_place_new_gtts_with_api_errors(self):
+        """Test place_new_gtts function when place_gtt raises exceptions"""
+        # Create mock kite client that raises exception on place_gtt
+        mock_client = Mock()
+        mock_client.place_gtt.side_effect = Exception("API Error")
+        
+        # Create sample UPDATE plan
+        update_plan = {
+            'symbol': 'ERRORSTOCK',
+            'action': 'UPDATE',
+            'exchange': 'NSE',
+            'new_high': 1000.0,
+            'tier1': {
+                'qty': 10,
+                'trigger': 900.0,
+                'limit': 890.0
+            },
+            'tier2': {
+                'qty': 20,
+                'trigger': 800.0,
+                'limit': 790.0
+            }
+        }
+        
+        # Call the function
+        result = main.place_new_gtts(mock_client, update_plan)
+        
+        # Should return 0 placed GTTs due to exceptions
+        self.assertEqual(result, 0)
+        
+        # Verify place_gtt was called twice but both failed
+        self.assertEqual(mock_client.place_gtt.call_count, 2)
+    
+    def test_place_new_gtts_with_different_exchange(self):
+        """Test place_new_gtts function with BSE exchange"""
+        # Create mock kite client
+        mock_client = Mock()
+        
+        # Create sample UPDATE plan with BSE exchange
+        update_plan = {
+            'symbol': 'RELIANCE',
+            'action': 'UPDATE',
+            'exchange': 'BSE',  # Different exchange
+            'new_high': 2600.0,
+            'tier1': {
+                'qty': 30,
+                'trigger': 2340.0,
+                'limit': 2314.0
+            },
+            'tier2': {
+                'qty': 70,
+                'trigger': 2080.0,
+                'limit': 2054.0
+            }
+        }
+        
+        # Call the function
+        result = main.place_new_gtts(mock_client, update_plan)
+        
+        # Assertions
+        self.assertEqual(result, 2)  # Should place 2 GTTs (both tiers)
+        
+        # Verify place_gtt was called exactly twice
+        self.assertEqual(mock_client.place_gtt.call_count, 2)
+        
+        # Get all call arguments
+        call_args_list = mock_client.place_gtt.call_args_list
+        
+        # Check that both calls used BSE exchange
+        for call in call_args_list:
+            kwargs = call[1]
+            self.assertEqual(kwargs['exchange'], 'BSE')
+    
+    def test_place_new_gtts_missing_exchange_defaults_to_nse(self):
+        """Test place_new_gtts function defaults to NSE when exchange is missing"""
+        # Create mock kite client
+        mock_client = Mock()
+        
+        # Create sample UPDATE plan without exchange field
+        update_plan = {
+            'symbol': 'RELIANCE',
+            'action': 'UPDATE',
+            # Missing 'exchange' field - should default to NSE
+            'new_high': 2600.0,
+            'tier1': {
+                'qty': 30,
+                'trigger': 2340.0,
+                'limit': 2314.0
+            },
+            'tier2': {
+                'qty': 70,
+                'trigger': 2080.0,
+                'limit': 2054.0
+            }
+        }
+        
+        # Call the function
+        result = main.place_new_gtts(mock_client, update_plan)
+        
+        # Assertions
+        self.assertEqual(result, 2)  # Should place 2 GTTs (both tiers)
+        
+        # Verify place_gtt was called exactly twice
+        self.assertEqual(mock_client.place_gtt.call_count, 2)
+        
+        # Get all call arguments
+        call_args_list = mock_client.place_gtt.call_args_list
+        
+        # Check that both calls defaulted to NSE exchange
+        for call in call_args_list:
+            kwargs = call[1]
+            self.assertEqual(kwargs['exchange'], 'NSE')
 
 if __name__ == '__main__':
     unittest.main()
