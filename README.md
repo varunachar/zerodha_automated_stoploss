@@ -1,4 +1,4 @@
-# Kite GTT Trading Application
+# Kite Automated Stop loss via GTT orders
 
 A Python application for automated trading using Kite Connect API with support for Good Till Triggered (GTT) orders.
 
