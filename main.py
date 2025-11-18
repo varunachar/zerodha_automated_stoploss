@@ -291,6 +291,53 @@ def get_portfolio_with_ltp(kite_client):
         logger.error(f"Error getting portfolio with LTP: {e}")
         raise
 
+def cancel_existing_gtts(kite_client, tradingsymbol, active_gtts_list):
+    """
+    Cancel all active GTTs for a specific trading symbol
+    
+    Args:
+        kite_client: Kite Connect client instance
+        tradingsymbol (str): Trading symbol to cancel GTTs for
+        active_gtts_list (list): List of all active GTTs from kite_client.get_gtts()
+        
+    Returns:
+        int: Number of GTTs canceled
+    """
+    try:
+        # Find all active GTTs for the specified trading symbol
+        matching_gtts = [
+            gtt for gtt in active_gtts_list 
+            if gtt.get('tradingsymbol') == tradingsymbol and gtt.get('status') == 'active'
+        ]
+        
+        if not matching_gtts:
+            logger.info(f"No active GTTs found for {tradingsymbol}")
+            return 0
+        
+        canceled_count = 0
+        logger.info(f"Found {len(matching_gtts)} active GTT(s) for {tradingsymbol}")
+        
+        # Cancel each matching GTT
+        for gtt in matching_gtts:
+            trigger_id = gtt.get('trigger_id')
+            if trigger_id:
+                try:
+                    logger.info(f"Canceling GTT for {tradingsymbol} - Trigger ID: {trigger_id}")
+                    kite_client.delete_gtt(trigger_id=trigger_id)
+                    canceled_count += 1
+                    logger.info(f"Successfully canceled GTT {trigger_id} for {tradingsymbol}")
+                except Exception as e:
+                    logger.error(f"Failed to cancel GTT {trigger_id} for {tradingsymbol}: {e}")
+            else:
+                logger.warning(f"GTT for {tradingsymbol} missing trigger_id: {gtt}")
+        
+        logger.info(f"Canceled {canceled_count} GTT(s) for {tradingsymbol}")
+        return canceled_count
+        
+    except Exception as e:
+        logger.error(f"Error canceling GTTs for {tradingsymbol}: {e}")
+        raise
+
 def format_gtt_report(plans):
     """
     Format GTT plans into a human-readable console report
