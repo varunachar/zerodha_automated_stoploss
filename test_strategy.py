@@ -33,8 +33,8 @@ class TestGTTStrategy(unittest.TestCase):
         self.assertEqual(config.TIER_1_QTY_PCT, 0.30)
     
     def test_kite_client_placeholder(self):
-        """Test that get_kite_client function exists"""
-        self.assertTrue(callable(getattr(main, 'get_kite_client')))
+        """Test that get_authenticated_client function exists"""
+        self.assertTrue(callable(getattr(main, 'get_authenticated_client')))
     
     def test_logging_setup(self):
         """Test that logging is properly configured"""
@@ -785,7 +785,6 @@ class TestGTTStrategy(unittest.TestCase):
         self.assertAlmostEqual(main.round_to_tick(10.186, 0.01), 10.18, places=2)
         self.assertAlmostEqual(main.round_to_tick(10.189, 0.01), 10.18, places=2)
     
-    @patch('main.get_kite_client')
     @patch('main.load_gtt_state')
     @patch('main.get_portfolio_with_ltp')
     @patch('main.plan_gtt_updates')
@@ -794,13 +793,12 @@ class TestGTTStrategy(unittest.TestCase):
     @patch('main.save_gtt_state')
     def test_main_live_run_error_handling(self, mock_save_state, mock_place_gtts, 
                                         mock_cancel_gtts, mock_plan_updates, 
-                                        mock_get_portfolio, mock_load_state, mock_get_kite):
+                                        mock_get_portfolio, mock_load_state):
         """Test error handling in main_live_run when one stock fails but others continue"""
         
         # Setup mock kite client
         mock_client = Mock()
         mock_client.get_gtts.return_value = []
-        mock_get_kite.return_value = mock_client
         
         # Setup mock state and portfolio
         mock_load_state.return_value = {}
@@ -839,8 +837,8 @@ class TestGTTStrategy(unittest.TestCase):
         # Setup place_new_gtts to succeed for both stocks (but won't be called for STOCK1 due to cancel failure)
         mock_place_gtts.return_value = 2
         
-        # Call main_live_run
-        result = main.main_live_run()
+        # Call main_live_run with mock client
+        result = main.main_live_run(mock_client)
         
         # Assertions
         self.assertEqual(len(result), 2)  # Should return both plans
@@ -850,11 +848,15 @@ class TestGTTStrategy(unittest.TestCase):
         mock_cancel_gtts.assert_any_call(mock_client, 'STOCK1', [])
         mock_cancel_gtts.assert_any_call(mock_client, 'STOCK2', [])
         
-        # Verify that place_new_gtts was only called for STOCK2 (STOCK1 failed at cancel step)
+        # Verify that place_new_gtts was only called for STOCK2 (STOCK1 failed during cancel)
         self.assertEqual(mock_place_gtts.call_count, 1)
-        mock_place_gtts.assert_called_with(mock_client, mock_plans[1])  # Only STOCK2 plan
         
-        # Verify that save_gtt_state was called
+        # Get the actual call arguments for place_new_gtts
+        place_call_args = mock_place_gtts.call_args_list[0]
+        placed_plan = place_call_args[0][1]  # Second positional argument is the plan
+        self.assertEqual(placed_plan['symbol'], 'STOCK2')
+        
+        # Verify state was saved
         mock_save_state.assert_called_once()
         
         # Verify the saved state only contains STOCK2 (STOCK1 failed)

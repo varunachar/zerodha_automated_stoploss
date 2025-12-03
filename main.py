@@ -11,6 +11,7 @@ from kiteconnect import KiteConnect
 import config
 import requests
 from urllib.parse import urlparse, parse_qs
+from flask import Flask, request, redirect, render_template_string
 
 
 # Configure logging
@@ -179,6 +180,7 @@ def plan_gtt_updates(portfolio, gtt_state, config):
             )
 
     logger.info(f"Generated {len(plans)} GTT plans")
+    logger.debug(f"Plans: {plans}")
     return plans
 
 
@@ -246,29 +248,41 @@ def get_request_token(url):
     return request_token
 
 
-def get_kite_client():
-    """
-    Initialize and return a Kite Connect client
+app = Flask(__name__)
 
+def get_login_url():
+    """
+    Get the login URL for Kite Connect
+    
     Returns:
-        KiteConnect: Configured Kite Connect client instance
+        str: The login URL
+    """
+    try:
+        kite_client = KiteConnect(api_key=config.API_KEY)
+        return kite_client.login_url()
+    except Exception as e:
+        logger.error(f"Error getting login URL: {e}")
+        return None
+
+def get_authenticated_client(request_token):
+    """
+    Initialize and return an authenticated Kite Connect client using request_token
+    
+    Args:
+        request_token (str): The request token from Zerodha login
+        
+    Returns:
+        KiteConnect: Authenticated Kite Connect client instance
     """
     try:
         # Initialize Kite Connect client
         kite_client = KiteConnect(api_key=config.API_KEY)
-        url = kite_client.login_url()
-        logger.info(f"Login URL: {url}")
-        # Make HTTP GET request to login URL and capture redirects
-        request_token = "5BP77TKngIn46qsKH6B9hFcwlJxnF1KR"
-        if request_token:
-            data = kite_client.generate_session(request_token, api_secret=config.API_SECRET)
-            kite_client.set_access_token(data["access_token"])
-            logger.info("Successfully initialized Kite Connect client")
-        else:
-            logger.error("Failed to get request token")
-            return None
         
-        ##kite_client.set_access_token(config.ACCESS_TOKEN)
+        # Generate session
+        data = kite_client.generate_session(request_token, api_secret=config.API_SECRET)
+        kite_client.set_access_token(data["access_token"])
+        logger.info("Successfully initialized authenticated Kite Connect client")
+        
         return kite_client
 
     except Exception as e:
@@ -361,7 +375,7 @@ def get_portfolio_with_ltp(kite_client):
         equity_holdings = [
             holding
             for holding in holdings
-            if holding.get("quantity", 0) > 0 and holding.get("instrument_type") == "EQ"
+            if holding.get("quantity", 0) > 0
         ]
         logger.info(f"Found {len(equity_holdings)} equity holdings with quantity > 0")
 
@@ -370,23 +384,23 @@ def get_portfolio_with_ltp(kite_client):
             return []
 
         # Extract tradingsymbols for LTP lookup
-        tradingsymbols = [holding["tradingsymbol"] for holding in equity_holdings]
-        logger.info(f"Fetching LTP for symbols: {tradingsymbols}")
+        trading_symbols = [holding["exchange"] + ":" + holding["tradingsymbol"] for holding in equity_holdings]
+        logger.info(f"Fetching LTP for symbols: {trading_symbols}")
 
         # Get LTP for all equity holdings
-        ltp_data = kite_client.ltp(tradingsymbols)
+        ltp_data = kite_client.ltp(trading_symbols)
         logger.info(f"Retrieved LTP data for {len(ltp_data)} instruments")
 
         # Merge LTP data back into holdings
         portfolio_with_ltp = []
         for holding in equity_holdings:
-            tradingsymbol = holding["tradingsymbol"]
-            if tradingsymbol in ltp_data:
+            trading_symbol = holding["exchange"] + ":" + holding["tradingsymbol"]
+            if trading_symbol in ltp_data:
                 # Create merged dictionary with required fields
                 merged_holding = {
-                    "tradingsymbol": tradingsymbol,
+                    "tradingsymbol": trading_symbol,
                     "quantity": holding["quantity"],
-                    "last_price": ltp_data[tradingsymbol]["last_price"],
+                    "last_price": ltp_data[trading_symbol]["last_price"],
                     "instrument_token": holding.get("instrument_token"),
                     "exchange": holding.get("exchange"),
                     "product": holding.get("product"),
@@ -401,10 +415,10 @@ def get_portfolio_with_ltp(kite_client):
                 }
                 portfolio_with_ltp.append(merged_holding)
                 logger.debug(
-                    f"Added {tradingsymbol}: qty={holding['quantity']}, ltp={ltp_data[tradingsymbol]['last_price']}"
+                    f"Added {trading_symbol}: qty={holding['quantity']}, ltp={ltp_data[trading_symbol]['last_price']}"
                 )
             else:
-                logger.warning(f"LTP data not found for {tradingsymbol}")
+                logger.warning(f"LTP data not found for {trading_symbol}")
 
         logger.info(
             f"Successfully merged portfolio data for {len(portfolio_with_ltp)} holdings"
@@ -744,12 +758,12 @@ def format_gtt_report(plans):
     return "\n".join(report_lines)
 
 
-def main_live_run():
+def main_live_run(kite_client):
     """
     Main live run function for executing GTT strategy with real orders
 
     This function:
-    1. Initializes a real Kite Connect client
+    1. Uses the provided authenticated Kite Connect client
     2. Loads current GTT state
     3. Gets portfolio data with LTP
     4. Gets all active GTTs
@@ -760,11 +774,9 @@ def main_live_run():
     try:
         logger.info("Starting GTT Strategy Live Run...")
 
-        # 1. Initialize real Kite Connect client
-        logger.info("Step 1: Initializing Kite Connect client...")
-        kite_client = get_kite_client()
+        # 1. Client is already initialized and passed as argument
         if not kite_client:
-            logger.error("Failed to initialize Kite Connect client")
+            logger.error("Invalid Kite Connect client provided")
             return
         # 2. Load current GTT state
         logger.info("Step 2: Loading GTT state...")
@@ -847,7 +859,7 @@ def main_live_run():
         raise
 
 
-def main_monitoring_run():
+def main_monitoring_run(kite_client):
     """
     Main monitoring run function for live monitoring without executing orders
 
@@ -855,7 +867,7 @@ def main_monitoring_run():
     It's useful for monitoring what the strategy would do without actual execution.
 
     This function:
-    1. Initializes a real Kite Connect client
+    1. Uses the provided authenticated Kite Connect client
     2. Loads current GTT state
     3. Gets real portfolio data with LTP
     4. Gets all active GTTs
@@ -865,11 +877,9 @@ def main_monitoring_run():
     try:
         logger.info("Starting GTT Strategy Monitoring Run...")
 
-        # 1. Initialize real Kite Connect client
-        logger.info("Step 1: Initializing Kite Connect client...")
-        kite_client = get_kite_client()
+        # 1. Client is already initialized and passed as argument
         if not kite_client:
-            logger.error("Failed to initialize Kite Connect client")
+            logger.error("Invalid Kite Connect client provided")
             return
 
         # 2. Load current GTT state
@@ -961,14 +971,88 @@ def main_dry_run():
         raise
 
 
+@app.route('/')
+def index():
+    """Home page with Login button"""
+    login_url = get_login_url()
+    html = f"""
+    <html>
+        <head>
+            <title>Zerodha GTT Strategy</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; text-align: center; padding_top: 50px; }}
+                .btn {{ display: inline-block; padding: 10px 20px; background-color: #388e3c; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }}
+                .btn:hover {{ background-color: #2e7d32; }}
+            </style>
+        </head>
+        <body>
+            <h1>Zerodha GTT Strategy Automation</h1>
+            <p>Click the button below to login with Zerodha and start the strategy.</p>
+            <a href="{login_url}" class="btn">Login with Zerodha</a>
+        </body>
+    </html>
+    """
+    return render_template_string(html)
+
+@app.route('/callback') # Or whatever your redirect URL path is configured to be
+def callback():
+    """Callback URL for Zerodha login"""
+    status = request.args.get('status')
+    request_token = request.args.get('request_token')
+    
+    if status != 'success' or not request_token:
+        return f"Login Failed: {request.args.get('message', 'Unknown error')}", 400
+        
+    try:
+        # Initialize authenticated client
+        kite_client = get_authenticated_client(request_token)
+        
+        # Run strategy based on config
+        output_report = ""
+        
+        if config.MONITORING_MODE:
+            logger.info("Running in MONITORING MODE via web request")
+            plans = main_monitoring_run(kite_client)
+            # Capture the report for display (this is a bit hacky as the function prints to stdout)
+            # Ideally main_monitoring_run should return the report string
+            output_report = "Strategy executed in MONITORING MODE. Check logs for details."
+            if plans:
+                 output_report += f"<br>Generated {len(plans)} plans."
+        else:
+            logger.info("Running in LIVE MODE via web request")
+            plans = main_live_run(kite_client)
+            output_report = "Strategy executed in LIVE MODE. Check logs for details."
+            if plans:
+                 output_report += f"<br>Processed {len(plans)} plans."
+            
+        return f"""
+        <html>
+            <head>
+                <title>Strategy Execution Result</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; padding: 20px; }}
+                    .success {{ color: green; font-weight: bold; }}
+                </style>
+            </head>
+            <body>
+                <h1>Execution Complete</h1>
+                <p class="success">Successfully authenticated and executed strategy.</p>
+                <p>{output_report}</p>
+                <p><a href="/">Back to Home</a></p>
+            </body>
+        </html>
+        """
+        
+    except Exception as e:
+        logger.error(f"Error in callback: {e}")
+        return f"Error executing strategy: {str(e)}", 500
+
 if __name__ == "__main__":
     if config.DRY_RUN:
         print("--- RUNNING IN DRY-RUN MODE ---")
         main_dry_run()
-    elif config.MONITORING_MODE:
-        print("--- RUNNING IN MONITORING MODE ---")
-        print("--- (Live data, no GTT execution) ---")
-        main_monitoring_run()
     else:
-        print("--- RUNNING IN LIVE MODE ---")
-        main_live_run()
+        # Start Flask server
+        print("--- STARTING WEB SERVER ---")
+        print("Please open http://localhost:5001 in your browser")
+        app.run(host='0.0.0.0', port=5001, debug=True)
