@@ -37,42 +37,60 @@ export KITE_ACCESS_TOKEN="your_access_token_here"  # Optional if using login_wit
 
 ### Usage
 
-#### Basic Usage
+The application supports three execution modes:
 
-```python
-from main import KiteGTT
+#### 1. Dry Run Mode (Default - Safe for Testing)
+Uses mock data and doesn't make any API calls. Perfect for testing strategy logic.
 
-# Initialize with API key
-kite_app = KiteGTT()
+```bash
+# In config.py:
+DRY_RUN = True
+MONITORING_MODE = False
 
-# Login with credentials (if you don't have access token)
-kite_app.login_with_credentials(
-    user_id="your_user_id",
-    password="your_password",
-    totp_secret="your_totp_secret"
-)
-
-# Get profile
-profile = kite_app.get_profile()
-print(profile)
-
-# Get positions
-positions = kite_app.get_positions()
-print(positions)
+# Run the application
+python main.py
 ```
 
-#### Using Environment Variables
+#### 2. Monitoring Mode (Live Data, No Execution)
+Connects to live Kite API to fetch real portfolio and GTT data, but doesn't cancel or place any GTTs. Shows what actions would be taken.
+
+```bash
+# In config.py:
+DRY_RUN = False
+MONITORING_MODE = True
+
+# Run the application
+python main.py
+```
+
+#### 3. Live Mode (Full Execution)
+⚠️ **CAUTION**: This mode will actually cancel and place GTT orders with real money.
+
+```bash
+# In config.py:
+DRY_RUN = False
+MONITORING_MODE = False
+
+# Run the application
+python main.py
+```
+
+#### Configuration
+
+Update `config.py` with your API credentials and strategy parameters:
 
 ```python
-import os
-from main import KiteGTT
+# API Keys
+API_KEY = "your_api_key_here"
+API_SECRET = "your_api_secret_here"
+ACCESS_TOKEN = "your_access_token_here"
 
-# Set your credentials
-os.environ['KITE_API_KEY'] = 'your_api_key'
-os.environ['KITE_ACCESS_TOKEN'] = 'your_access_token'
-
-# Initialize
-kite_app = KiteGTT()
+# Strategy Parameters
+TIER_1_QTY_PCT = 0.30  # 30% of holding
+TIER_1_TRIGGER_PCT = 0.10  # 10% from high
+TIER_1_LIMIT_PCT = 0.11    # 11% from high
+TIER_2_TRIGGER_PCT = 0.20  # 20% from high
+TIER_2_LIMIT_PCT = 0.21    # 21% from high
 ```
 
 ## Libraries Used
