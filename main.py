@@ -690,6 +690,101 @@ def format_monitoring_report(plans, active_gtts):
     return "\n".join(report_lines)
 
 
+def format_live_report(plans, active_gtts):
+    """
+    Format GTT plans and active GTTs into a comprehensive live execution report
+
+    Args:
+        plans (list): List of GTT plan dictionaries
+        active_gtts (list): List of active GTTs from Kite API after execution
+
+    Returns:
+        str: Formatted live execution report string
+    """
+    if not plans:
+        return "No GTT plans generated."
+
+    report_lines = []
+    report_lines.append("=" * 80)
+    report_lines.append("GTT STOP-LOSS STRATEGY - LIVE MODE EXECUTION REPORT")
+    report_lines.append("=" * 80)
+    report_lines.append("")
+
+    # Count actions
+    update_count = sum(1 for plan in plans if plan["action"] == "UPDATE")
+    no_action_count = sum(1 for plan in plans if plan["action"] == "NO_ACTION")
+
+    report_lines.append(
+        f"SUMMARY: {len(plans)} holdings analyzed | {update_count} updates executed | {no_action_count} no action"
+    )
+    report_lines.append(f"ACTIVE GTTs: {len(active_gtts)} currently active")
+    report_lines.append("")
+    report_lines.append("✅ LIVE MODE: GTTs were canceled and placed as planned")
+    report_lines.append("")
+
+    # Group plans by action type
+    update_plans = [plan for plan in plans if plan["action"] == "UPDATE"]
+    no_action_plans = [plan for plan in plans if plan["action"] == "NO_ACTION"]
+
+    # Report UPDATE actions first
+    if update_plans:
+        report_lines.append("🔄 ACTIONS EXECUTED:")
+        report_lines.append("-" * 40)
+        for plan in update_plans:
+            symbol = plan["symbol"]
+            new_high = plan["new_high"]
+            tier1 = plan["tier1"]
+            tier2 = plan["tier2"]
+
+            report_lines.append(f"{symbol}: EXECUTED | New High: ₹{new_high}")
+            report_lines.append(
+                f"  ├─ Placed Tier 1: {tier1['qty']} shares @ Trigger: ₹{tier1['trigger']}, Limit: ₹{tier1['limit']}"
+            )
+            report_lines.append(
+                f"  └─ Placed Tier 2: {tier2['qty']} shares @ Trigger: ₹{tier2['trigger']}, Limit: ₹{tier2['limit']}"
+            )
+            report_lines.append("")
+
+    # Report NO_ACTION items
+    if no_action_plans:
+        report_lines.append("✅ NO ACTION REQUIRED:")
+        report_lines.append("-" * 40)
+        for plan in no_action_plans:
+            symbol = plan["symbol"]
+            reason = plan["reason"]
+            report_lines.append(f"{symbol}: NO_ACTION | {reason}")
+        report_lines.append("")
+
+    # Report current active GTTs
+    if active_gtts:
+        report_lines.append("📋 CURRENT ACTIVE GTTs:")
+        report_lines.append("-" * 40)
+        for gtt in active_gtts:
+            symbol = gtt.get("tradingsymbol", "UNKNOWN")
+            trigger_id = gtt.get("trigger_id", "N/A")
+            trigger_values = gtt.get("trigger_values", [])
+            orders = gtt.get("orders", [])
+
+            trigger_price = trigger_values[0] if trigger_values else "N/A"
+            order_info = ""
+            if orders:
+                order = orders[0]
+                qty = order.get("quantity", "N/A")
+                price = order.get("price", "N/A")
+                order_info = f"{qty} shares @ ₹{price}"
+
+            report_lines.append(
+                f"{symbol}: GTT#{trigger_id} | Trigger: ₹{trigger_price} | {order_info}"
+            )
+        report_lines.append("")
+
+    report_lines.append("=" * 80)
+    report_lines.append("End of Live Execution Report")
+    report_lines.append("=" * 80)
+
+    return "\n".join(report_lines)
+
+
 def format_gtt_report(plans):
     """
     Format GTT plans into a human-readable console report
@@ -848,10 +943,15 @@ def main_live_run(kite_client):
         else:
             logger.error("Failed to save GTT state")
 
+        # Get updated active GTTs after execution
+        logger.info("Step 8: Getting updated active GTTs...")
+        updated_active_gtts = kite_client.get_gtts()
+        logger.info(f"Retrieved {len(updated_active_gtts)} active GTTs after execution")
+
         logger.info(
             f"Live run completed successfully. Processed {update_count} updates."
         )
-        return plans
+        return plans, updated_active_gtts
 
     except Exception as e:
         logger.error(f"Error during live run: {e}")
@@ -912,7 +1012,7 @@ def main_monitoring_run(kite_client):
         print("\n")
 
         logger.info("Monitoring run completed successfully")
-        return plans
+        return plans, active_gtts
 
     except Exception as e:
         logger.error(f"Error during monitoring run: {e}")
@@ -1012,33 +1112,39 @@ def callback():
         
         if config.MONITORING_MODE:
             logger.info("Running in MONITORING MODE via web request")
-            plans = main_monitoring_run(kite_client)
-            # Capture the report for display (this is a bit hacky as the function prints to stdout)
-            # Ideally main_monitoring_run should return the report string
-            output_report = "Strategy executed in MONITORING MODE. Check logs for details."
-            if plans:
-                 output_report += f"<br>Generated {len(plans)} plans."
+            plans, active_gtts = main_monitoring_run(kite_client)
+            # Generate formatted monitoring report
+            output_report = format_monitoring_report(plans, active_gtts)
         else:
             logger.info("Running in LIVE MODE via web request")
-            plans = main_live_run(kite_client)
-            output_report = "Strategy executed in LIVE MODE. Check logs for details."
-            if plans:
-                 output_report += f"<br>Processed {len(plans)} plans."
+            plans, active_gtts = main_live_run(kite_client)
+            # Generate formatted live execution report
+            output_report = format_live_report(plans, active_gtts)
             
+        # Convert report to HTML (preserve formatting with <pre> tag)
+        html_report = output_report.replace("<", "&lt;").replace(">", "&gt;")
+        
         return f"""
         <html>
             <head>
                 <title>Strategy Execution Result</title>
                 <style>
-                    body {{ font-family: Arial, sans-serif; padding: 20px; }}
-                    .success {{ color: green; font-weight: bold; }}
+                    body {{ font-family: Arial, sans-serif; padding: 20px; background-color: #f5f5f5; }}
+                    .container {{ max-width: 1200px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                    .success {{ color: #2e7d32; font-weight: bold; font-size: 18px; margin-bottom: 20px; }}
+                    .report {{ background-color: #1e1e1e; color: #d4d4d4; padding: 20px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }}
+                    .back-link {{ display: inline-block; margin-top: 20px; padding: 10px 20px; background-color: #388e3c; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }}
+                    .back-link:hover {{ background-color: #2e7d32; }}
+                    h1 {{ color: #333; margin-bottom: 10px; }}
                 </style>
             </head>
             <body>
-                <h1>Execution Complete</h1>
-                <p class="success">Successfully authenticated and executed strategy.</p>
-                <p>{output_report}</p>
-                <p><a href="/">Back to Home</a></p>
+                <div class="container">
+                    <h1>Execution Complete</h1>
+                    <p class="success">✅ Successfully authenticated and executed strategy.</p>
+                    <div class="report">{html_report}</div>
+                    <a href="/" class="back-link">Back to Home</a>
+                </div>
             </body>
         </html>
         """

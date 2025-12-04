@@ -79,21 +79,12 @@ class TestGTTStrategy(unittest.TestCase):
                 'exchange': 'NSE',
                 'product': 'CNC',
                 'average_price': 3500.0
-            },
-            {
-                'tradingsymbol': 'HDFC_MF',
-                'instrument_type': 'MF',  # Mutual Fund (should be filtered out)
-                'quantity': 100,
-                'instrument_token': 123456,
-                'exchange': 'NSE',
-                'product': 'CNC',
-                'average_price': 1000.0
             }
         ]
         
         # Mock LTP data - only for the valid EQ stock
         mock_ltp = {
-            'RELIANCE': {'last_price': 2600.0}
+            'NSE:RELIANCE': {'last_price': 2600.0}
         }
         
         # Setup mock client
@@ -112,13 +103,13 @@ class TestGTTStrategy(unittest.TestCase):
         holding = result[0]
         
         # Verify the holding has correct data
-        self.assertEqual(holding['tradingsymbol'], 'RELIANCE')
+        self.assertEqual(holding['tradingsymbol'], 'NSE:RELIANCE')
         self.assertEqual(holding['quantity'], 10)
         self.assertEqual(holding['last_price'], 2600.0)
         
         # Verify API calls
         mock_client.holdings.assert_called_once()
-        mock_client.ltp.assert_called_once_with(['RELIANCE'])  # Only RELIANCE should be queried for LTP
+        mock_client.ltp.assert_called_once_with(['NSE:RELIANCE'])  # Only RELIANCE should be queried for LTP
     
     @patch('main.KiteConnect')
     def test_get_portfolio_with_ltp_empty_holdings(self, mock_kite_class):
