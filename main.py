@@ -327,23 +327,18 @@ def get_portfolio_with_ltp(kite_client):
             return []
 
         # Extract tradingsymbols for LTP lookup
-        trading_symbols = [holding["exchange"] + ":" + holding["tradingsymbol"] for holding in equity_holdings]
-        logger.info(f"Fetching LTP for symbols: {trading_symbols}")
-
-        # Get LTP for all equity holdings
-        ltp_data = kite_client.ltp(trading_symbols)
-        logger.info(f"Retrieved LTP data for {len(ltp_data)} instruments")
-
-        # Merge LTP data back into holdings
+        # Process holdings and use last_price directly from holding data
         portfolio_with_ltp = []
         for holding in equity_holdings:
-            trading_symbol = holding["exchange"] + ":" + holding["tradingsymbol"]
-            if trading_symbol in ltp_data:
+            trading_symbol = holding["tradingsymbol"]
+            last_price = holding.get("last_price")
+            
+            if last_price is not None:
                 # Create merged dictionary with required fields
                 merged_holding = {
                     "tradingsymbol": trading_symbol,
                     "quantity": holding["quantity"],
-                    "last_price": ltp_data[trading_symbol]["last_price"],
+                    "last_price": last_price,
                     "instrument_token": holding.get("instrument_token"),
                     "exchange": holding.get("exchange"),
                     "product": holding.get("product"),
@@ -358,10 +353,10 @@ def get_portfolio_with_ltp(kite_client):
                 }
                 portfolio_with_ltp.append(merged_holding)
                 logger.debug(
-                    f"Added {trading_symbol}: qty={holding['quantity']}, ltp={ltp_data[trading_symbol]['last_price']}"
+                    f"Added {trading_symbol}: qty={holding['quantity']}, ltp={last_price}"
                 )
             else:
-                logger.warning(f"LTP data not found for {trading_symbol}")
+                logger.warning(f"Last price not found for {trading_symbol} in holdings data")
 
         logger.info(
             f"Successfully merged portfolio data for {len(portfolio_with_ltp)} holdings"
