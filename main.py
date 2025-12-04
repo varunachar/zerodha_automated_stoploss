@@ -156,12 +156,15 @@ def plan_gtt_updates(portfolio, gtt_state, config):
 
             # Calculate quantities for each tier
             tier1_qty = int(quantity * config.TIER_1_QTY_PCT)
+            
+            # Since tier1 would have triggered, only the remaining quantity would be used for tier2
             tier2_qty = quantity - tier1_qty
 
             plan = {
                 "symbol": symbol,
                 "action": "UPDATE",
                 "exchange": exchange,
+                "last_price": current_price,
                 "new_high": new_high,
                 "tier1": {
                     "qty": tier1_qty,
@@ -466,7 +469,7 @@ def place_new_gtts(kite_client, plan):
                     tradingsymbol=symbol,
                     exchange=exchange,
                     trigger_values=[tier1.get("trigger")],
-                    last_price=tier1.get("trigger"),
+                    last_price=plan.get("last_price"),
                     orders=[
                         {
                             "transaction_type": "SELL",
@@ -496,7 +499,7 @@ def place_new_gtts(kite_client, plan):
                     tradingsymbol=symbol,
                     exchange=exchange,
                     trigger_values=[tier2.get("trigger")],
-                    last_price=tier2.get("trigger"),
+                    last_price=plan.get("last_price"),
                     orders=[
                         {
                             "transaction_type": "SELL",
@@ -602,23 +605,7 @@ def format_monitoring_report(plans, active_gtts):
     if active_gtts:
         report_lines.append("📋 CURRENT ACTIVE GTTs:")
         report_lines.append("-" * 40)
-        for gtt in active_gtts:
-            symbol = gtt.get("tradingsymbol", "UNKNOWN")
-            trigger_id = gtt.get("trigger_id", "N/A")
-            trigger_values = gtt.get("trigger_values", [])
-            orders = gtt.get("orders", [])
-
-            trigger_price = trigger_values[0] if trigger_values else "N/A"
-            order_info = ""
-            if orders:
-                order = orders[0]
-                qty = order.get("quantity", "N/A")
-                price = order.get("price", "N/A")
-                order_info = f"{qty} shares @ ₹{price}"
-
-            report_lines.append(
-                f"{symbol}: GTT#{trigger_id} | Trigger: ₹{trigger_price} | {order_info}"
-            )
+        report_lines.extend(format_active_gtts(active_gtts))
         report_lines.append("")
 
     report_lines.append("=" * 80)
@@ -626,6 +613,39 @@ def format_monitoring_report(plans, active_gtts):
     report_lines.append("=" * 80)
 
     return "\n".join(report_lines)
+
+# Format active GTTs for live report
+def format_active_gtts(active_gtts):
+    """
+    Format active GTTs for live report
+
+    Args:
+        active_gtts (list): List of active GTTs from Kite API
+
+    Returns:
+        str: Formatted active GTTs string
+    """
+
+    report_lines = []
+    for gtt in active_gtts:
+    
+        trigger_id = gtt.get("id", "N/A")
+        trigger_values = gtt.get("condition", {}).get("trigger_values", [])
+        orders = gtt.get("orders", [])
+    
+        trigger_price = trigger_values[0] if trigger_values else "N/A"
+        order_info = ""
+        if orders:
+            order = orders[0]
+            symbol = order.get("tradingsymbol", "UNKNOWN")
+            qty = order.get("quantity", "N/A")
+            price = order.get("price", "N/A")
+            order_info = f"{qty} shares @ ₹{price}"
+    
+        report_lines.append(
+            f"{symbol}: GTT#{trigger_id} | Trigger: ₹{trigger_price} | {order_info}"
+        )
+    return report_lines
 
 
 def format_live_report(plans, active_gtts):
@@ -697,23 +717,8 @@ def format_live_report(plans, active_gtts):
     if active_gtts:
         report_lines.append("📋 CURRENT ACTIVE GTTs:")
         report_lines.append("-" * 40)
-        for gtt in active_gtts:
-            symbol = gtt.get("tradingsymbol", "UNKNOWN")
-            trigger_id = gtt.get("trigger_id", "N/A")
-            trigger_values = gtt.get("trigger_values", [])
-            orders = gtt.get("orders", [])
-
-            trigger_price = trigger_values[0] if trigger_values else "N/A"
-            order_info = ""
-            if orders:
-                order = orders[0]
-                qty = order.get("quantity", "N/A")
-                price = order.get("price", "N/A")
-                order_info = f"{qty} shares @ ₹{price}"
-
-            report_lines.append(
-                f"{symbol}: GTT#{trigger_id} | Trigger: ₹{trigger_price} | {order_info}"
-            )
+        formatted_active_gtts = format_active_gtts(active_gtts)
+        report_lines.extend(formatted_active_gtts)
         report_lines.append("")
 
     report_lines.append("=" * 80)
