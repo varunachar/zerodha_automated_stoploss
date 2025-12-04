@@ -254,8 +254,53 @@ class TestGTTStrategy(unittest.TestCase):
         self.assertEqual(len(result), 1)
         plan = result[0]
         self.assertEqual(plan['symbol'], 'NEWSTOCK')
-        self.assertEqual(plan['action'], 'NO_ACTION')
-        self.assertIn('LTP (1000) not a new high (1000)', plan['reason'])
+        self.assertEqual(plan['action'], 'UPDATE')
+        self.assertEqual(plan['new_high'], 1000)
+        
+        # Check tier1 calculations
+        self.assertEqual(plan['tier1']['qty'], 15)  # 50 * 0.30
+        self.assertEqual(plan['tier1']['trigger'], 900.0)  # 1000 * (1 - 0.10)
+        self.assertEqual(plan['tier1']['limit'], 890.0)  # 1000 * (1 - 0.11)
+    
+    def test_plan_gtt_updates_empty_state(self):
+        """Test plan_gtt_updates when GTT state is completely empty"""
+        # Mock portfolio data with multiple stocks
+        portfolio = [
+            {
+                'tradingsymbol': 'STOCK1',
+                'last_price': 1000,
+                'quantity': 100
+            },
+            {
+                'tradingsymbol': 'STOCK2',
+                'last_price': 500,
+                'quantity': 200
+            }
+        ]
+        
+        # Empty GTT state
+        gtt_state = {}
+        
+        # Mock config
+        mock_config = Mock()
+        mock_config.TIER_1_TRIGGER_PCT = 0.10
+        mock_config.TIER_1_LIMIT_PCT = 0.11
+        mock_config.TIER_2_TRIGGER_PCT = 0.20
+        mock_config.TIER_2_LIMIT_PCT = 0.21
+        mock_config.TIER_1_QTY_PCT = 0.30
+        
+        result = main.plan_gtt_updates(portfolio, gtt_state, mock_config)
+        
+        self.assertEqual(len(result), 2)
+        
+        # Verify both stocks have UPDATE plans
+        stock1_plan = next(p for p in result if p['symbol'] == 'STOCK1')
+        self.assertEqual(stock1_plan['action'], 'UPDATE')
+        self.assertEqual(stock1_plan['new_high'], 1000)
+        
+        stock2_plan = next(p for p in result if p['symbol'] == 'STOCK2')
+        self.assertEqual(stock2_plan['action'], 'UPDATE')
+        self.assertEqual(stock2_plan['new_high'], 500)
     
     def test_plan_gtt_updates_mixed_scenarios(self):
         """Test plan_gtt_updates with mixed scenarios (new high and no action)"""
