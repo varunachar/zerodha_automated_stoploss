@@ -385,12 +385,16 @@ def cancel_existing_gtts(kite_client, tradingsymbol, active_gtts_list):
     """
     try:
         # Find all active GTTs for the specified trading symbol
-        matching_gtts = [
-            gtt
-            for gtt in active_gtts_list
-            if gtt.get("tradingsymbol") == tradingsymbol
-            and gtt.get("status") == "active"
-        ]
+        matching_gtts = []
+        for gtt in active_gtts_list:
+            # Handle both old and new API formats
+            # New format: tradingsymbol is in condition dict
+            symbol = gtt.get("tradingsymbol")
+            if not symbol:
+                symbol = gtt.get("condition", {}).get("tradingsymbol")
+            
+            if symbol == tradingsymbol and gtt.get("status") == "active":
+                matching_gtts.append(gtt)
 
         if not matching_gtts:
             logger.info(f"No active GTTs found for {tradingsymbol}")
@@ -401,7 +405,9 @@ def cancel_existing_gtts(kite_client, tradingsymbol, active_gtts_list):
 
         # Cancel each matching GTT
         for gtt in matching_gtts:
-            trigger_id = gtt.get("trigger_id")
+            # Handle both old and new API formats for ID
+            trigger_id = gtt.get("trigger_id") or gtt.get("id")
+            
             if trigger_id:
                 try:
                     logger.info(
